@@ -12,7 +12,8 @@ from PyQt5 import QtCore, QtWidgets, uic
 from PyQt5.QtWidgets import QFileDialog, QMessageBox
 from skimage.filters import sobel
 from skimage.measure import regionprops
-from skimage.morphology import opening, watershed, disk, erosion
+from skimage.morphology import opening, disk, erosion
+from skimage.segmentation import watershed
 
 from UI_files.Atom_Seg_Ui import Ui_MainWindow
 from utils.utils import GetIndexRangeOfBlk, load_model, PIL2Pixmap, map01
@@ -109,7 +110,7 @@ class Code_MainWindow(Ui_MainWindow):
 
             self.width, self.height = self.ori_image.size
             pix_image = PIL2Pixmap(self.ori_image)
-            pix_image.scaled(self.ori.size(), QtCore.Qt.KeepAspectRatio)
+            pix_image = pix_image.scaled(self.ori.size(), QtCore.Qt.KeepAspectRatio)
             self.ori.setPixmap(pix_image)
             self.ori.show()
             self.ori_content = self.ori_image
@@ -144,7 +145,7 @@ class Code_MainWindow(Ui_MainWindow):
             self.ori_content = self.ori_image
 
         pix_image = PIL2Pixmap(self.ori_content)
-        pix_image.scaled(self.ori.size(), QtCore.Qt.KeepAspectRatio)
+        pix_image = pix_image.scaled(self.ori.size(), QtCore.Qt.KeepAspectRatio)
         self.ori.setPixmap(pix_image)
         self.ori.show()
 
@@ -192,7 +193,7 @@ class Code_MainWindow(Ui_MainWindow):
             'uint8')
         self.output_image = Image.fromarray((self.model_output_content), mode='L')
         pix_image = PIL2Pixmap(self.output_image)
-        pix_image.scaled(self.model_output.size(), QtCore.Qt.KeepAspectRatio)
+        pix_image = pix_image.scaled(self.model_output.size(), QtCore.Qt.KeepAspectRatio)
         self.model_output.setPixmap(pix_image)
         self.model_output.show()
         del temp_image
@@ -207,18 +208,39 @@ class Code_MainWindow(Ui_MainWindow):
         self.Denoise()
 
     def Denoise(self):
+        # Check if model output exists
+        if self.model_output_content is None:
+            return
+
         radius = self.se_num.value()
         """changes should be done on the kernel generation"""
-        kernel = disk(radius)
 
-        if self.denoise_method.currentText == 'Opening':
-            self.denoised_image = opening(self.model_output_content, kernel)
+        # Handle edge cases for radius
+        if radius <= 0:
+            # If radius is 0 or negative, just copy the original image
+            self.denoised_image = self.model_output_content.copy()
         else:
-            self.denoised_image = erosion(self.model_output_content, kernel)
+            try:
+                kernel = disk(radius)
+
+                # Ensure kernel is valid
+                if kernel.size == 0:
+                    self.denoised_image = self.model_output_content.copy()
+                else:
+                    if self.denoise_method.currentText == 'Opening':
+                        self.denoised_image = opening(self.model_output_content, kernel)
+                    else:
+                        self.denoised_image = erosion(self.model_output_content, kernel)
+
+            except (RuntimeError, ValueError) as e:
+                print(f"Morphological operation failed: {e}")
+                # Fallback to original image
+                self.denoised_image = self.model_output_content.copy()
 
         temp_image = Image.fromarray(self.denoised_image, mode='L')
 
         pix_image = PIL2Pixmap(temp_image)
+        pix_image = pix_image.scaled(self.preprocess.size(), QtCore.Qt.KeepAspectRatio)
         self.preprocess.setPixmap(pix_image)
         self.preprocess.show()
         del temp_image
@@ -270,9 +292,11 @@ class Code_MainWindow(Ui_MainWindow):
                              fill='red', outline='red')
 
         pix_image = PIL2Pixmap(self.out_markers)
+        pix_image = pix_image.scaled(self.preprocess.size(), QtCore.Qt.KeepAspectRatio)
         self.preprocess.setPixmap(pix_image)
         self.preprocess.show()
         pix_image = PIL2Pixmap(self.ori_markers)
+        pix_image = pix_image.scaled(self.detect_result.size(), QtCore.Qt.KeepAspectRatio)
         self.detect_result.setPixmap(pix_image)
         self.detect_result.show()
 
@@ -345,11 +369,11 @@ class Code_MainWindow(Ui_MainWindow):
 
         if opt == 'Four-panel image':
             new_save_name = _path + '_four_panel_' + self.model_name + suffix
-            im_save = Image.new('RGB', ((self.width + 1) * 2, (self.height + 1) * 2))
+            im_save = Image.new('RGB', (self.width * 2 + 4, self.height * 2 + 4))
             im_save.paste(self.ori_content, (0, 0))
-            im_save.paste(self.output_image, (self.width + 2, 0))
-            im_save.paste(self.ori_markers, (0, self.height + 2))
-            im_save.paste(self.out_markers, (self.width + 2, self.height + 2))
+            im_save.paste(self.output_image, (self.width + 4, 0))
+            im_save.paste(self.ori_markers, (0, self.height + 4))
+            im_save.paste(self.out_markers, (self.width + 4, self.height + 4))
             im_save.save(new_save_name)
             del im_save
 
@@ -375,11 +399,11 @@ class Code_MainWindow(Ui_MainWindow):
             new_save_name = _path + '_origin_' + self.model_name + suffix
             self.ori_markers.save(new_save_name)
             new_save_name = _path + '_four_panel_' + self.model_name + suffix
-            im_save = Image.new('RGB', ((self.width + 1) * 2, (self.height + 1) * 2))
+            im_save = Image.new('RGB', (self.width * 2 + 4, self.height * 2 + 4))
             im_save.paste(self.ori_content, (0, 0))
-            im_save.paste(self.output_image, (self.width + 2, 0))
-            im_save.paste(self.ori_markers, (0, self.height + 2))
-            im_save.paste(self.out_markers, (self.width + 2, self.height + 2))
+            im_save.paste(self.output_image, (self.width + 4, 0))
+            im_save.paste(self.ori_markers, (0, self.height + 4))
+            im_save.paste(self.out_markers, (self.width + 4, self.height + 4))
             im_save.save(new_save_name)
             del im_save
             new_save_name = _path + '_pos_' + self.model_name + '.txt'

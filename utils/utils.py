@@ -53,9 +53,19 @@ def load_model(model_path, data, cuda, iter = 1):
 			net = net.cuda()
 		if cuda:
 			net = torch.nn.DataParallel(net)
-			net.load_state_dict(torch.load(model_path))
+			# Load on GPU if available, fallback to CPU if needed
+			try:
+				net.load_state_dict(torch.load(model_path))
+			except RuntimeError:
+				# Fallback to CPU loading if GPU loading fails
+				state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+				net.load_state_dict(state_dict)
 		else:
-			net.load_state_dict({k.replace('module.', ''): v for k, v in torch.load(model_path).items()})
+			# Load on CPU, handle both GPU-saved and CPU-saved models
+			map_location = torch.device('cpu')
+			state_dict = torch.load(model_path, map_location=map_location)
+			# Remove 'module.' prefix if present (from DataParallel)
+			net.load_state_dict({k.replace('module.', ''): v for k, v in state_dict.items()})
 
 		transform = ToTensor()
 		ori_tensor = transform(data)
