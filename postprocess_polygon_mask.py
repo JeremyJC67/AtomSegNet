@@ -24,6 +24,8 @@ MANUAL_MASK_IMAGE = Path("manual_mask.png")  # optional user-defined mask
 
 RESULT_ROOT = Path("atomsegnet_results")
 MODEL_SUFFIX = "Gen1-gaussianMask"
+DATASET_ROOT = Path("/Users/jichengwang/Documents/Stanford_Intern/dataset/39frames")
+SOLID_MASK_PATH = Path("mask/solid_polygon_from_red.npy")
 
 LINE_THRESHOLD = 80  # darker-than-threshold pixels treated as hand-drawn line
 DILATION_STEPS = 3   # thicken the line to ensure there are no gaps
@@ -35,6 +37,7 @@ REMOVE_REGION_Y_LOW = 590.0  # y threshold for 100 < x < 410
 REMOVE_REGION_Y_HIGH = 630.0  # y threshold for x >= 410
 
 _MASK_CACHE: Dict[Path, np.ndarray] = {}
+_SOLID_MASK: Optional[np.ndarray] = None
 
 # ---------------------------------------------------------------------------
 # Utility functions
@@ -250,6 +253,23 @@ def _get_remove_mask(image_path: Path) -> np.ndarray:
     return mask
 
 
+def _load_solid_mask(expected_shape: Tuple[int, int]) -> Optional[np.ndarray]:
+    global _SOLID_MASK
+    if not SOLID_MASK_PATH.exists():
+        return None
+    if _SOLID_MASK is None:
+        solid = np.load(SOLID_MASK_PATH)
+        if solid.ndim != 2:
+            raise ValueError("Solid polygon mask must be 2D")
+        solid = solid.astype(bool)
+        _SOLID_MASK = solid
+    if _SOLID_MASK.shape != expected_shape:
+        raise ValueError(
+            f"Solid mask shape {_SOLID_MASK.shape} does not match expected {expected_shape}"
+        )
+    return _SOLID_MASK
+
+
 # ---------------------------------------------------------------------------
 # Result filtering
 # ---------------------------------------------------------------------------
@@ -262,6 +282,19 @@ def load_positions(path: Path) -> np.ndarray:
     if data.ndim == 1 and data.size:
         data = data[None, :]
     return data
+
+
+def _frame_id_from_folder(folder: Path) -> Optional[str]:
+    parts = folder.name.split("_")
+    if not parts:
+        return None
+    maybe_id = parts[0]
+    return maybe_id if maybe_id.isdigit() else None
+
+
+def _dataset_image(frame_id: str) -> Optional[Path]:
+    candidate = DATASET_ROOT / f"{frame_id}.jpg"
+    return candidate if candidate.exists() else None
 
 
 def filter_positions(data: np.ndarray, remove_mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -298,7 +331,7 @@ def filter_positions(data: np.ndarray, remove_mask: np.ndarray) -> Tuple[np.ndar
     return data[keep_mask], keep_mask
 
 
-def draw_overlays(base_path: Path, all_points: np.ndarray, keep_mask: np.ndarray, suffix: str) -> None:
+def draw_overlays(base_path: Path, all_points: np.ndarray, keep_mask: np.ndarray, suffix: str, output_path: Optional[Path] = None) -> None:
     if not base_path.exists():
         return
     base = Image.open(base_path).convert("RGB")
@@ -311,7 +344,11 @@ def draw_overlays(base_path: Path, all_points: np.ndarray, keep_mask: np.ndarray
         bbox = [x - 2, y - 2, x + 2, y + 2]
         draw.ellipse(bbox, outline="red", fill="red", width=1)
 
-    base.save(base_path.with_name(base_path.stem + suffix + base_path.suffix))
+    if output_path is None:
+        output_path = base_path.with_name(base_path.stem + suffix + base_path.suffix)
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    base.save(output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +381,19 @@ def process_result_folder(folder: Path) -> None:
 
     remove_mask = _get_remove_mask(ref_image)
     filtered, keep_mask = filter_positions(data, remove_mask)
+
+    solid_mask = _load_solid_mask(remove_mask.shape)
+    if solid_mask is not None and filtered.size:
+        y = filtered[:, 0]
+        x = filtered[:, 1]
+        yi = np.clip(np.floor(y).astype(int), 0, solid_mask.shape[0] - 1)
+        xi = np.clip(np.floor(x).astype(int), 0, solid_mask.shape[1] - 1)
+        keep_after_solid = ~solid_mask[yi, xi]
+        if not np.all(keep_after_solid):
+            filtered = filtered[keep_after_solid]
+            keep_indices = np.where(keep_mask)[0]
+            keep_mask[keep_indices[~keep_after_solid]] = False
+
     out_txt = pos_path.with_name(pos_path.stem + "_filtered.txt")
     np.savetxt(out_txt, filtered, fmt="%.6f", delimiter=",")
 
@@ -356,12 +406,18 @@ def process_result_folder(folder: Path) -> None:
     origin_png = folder / f"{folder.name}_origin_{MODEL_SUFFIX}.png"
     denoised_png = folder / f"{folder.name}_denoised_{MODEL_SUFFIX}.png"
 
-    # Try raw image first (without pre-drawn red dots), then fall back to origin.
     base_for_overlay = raw_png if raw_png.exists() else origin_png
     if base_for_overlay.exists():
         draw_overlays(base_for_overlay, data, keep_mask, "_filtered")
     if denoised_png.exists():
         draw_overlays(denoised_png, data, keep_mask, "_filtered")
+
+    frame_id = _frame_id_from_folder(folder)
+    if frame_id is not None:
+        dataset_img = _dataset_image(frame_id)
+        if dataset_img is not None:
+            output_path = folder / f"{folder.name}_mask_filtered.png"
+            draw_overlays(dataset_img, data, keep_mask, "_mask_filtered", output_path=output_path)
 
     print(f"Filtered {pos_path} → {out_txt} ({len(data)} → {len(filtered)})")
 
