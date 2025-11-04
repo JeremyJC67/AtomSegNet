@@ -30,3 +30,5 @@ Thumbs.db
 #data files
 denoised_1742/
 atomsegnet1742_results/
+atom*
+blured*

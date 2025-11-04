@@ -9,10 +9,7 @@ from typing import Iterable
 
 import numpy as np
 
-try:
-    from skimage.filters import threshold_otsu  # type: ignore
-except ImportError:  # pragma: no cover
-    threshold_otsu = None  # type: ignore
+from utils.point_postprocess import clean_positions
 
 
 DTYPE = np.dtype(
@@ -73,77 +70,17 @@ def save_positions(path: Path, data: np.ndarray) -> None:
     path.write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
-def choose_threshold(scores: np.ndarray, args: argparse.Namespace) -> float:
-    if args.score_threshold is not None:
-        return float(args.score_threshold)
-    if scores.size == 0:
-        return float(args.min_score)
-
-    threshold = None
-    unique_scores = np.unique(scores)
-
-    if args.adaptive_method == "otsu" and threshold_otsu is not None and unique_scores.size > 1:
-        try:
-            threshold = float(threshold_otsu(scores))
-        except ValueError:
-            threshold = None
-
-    if threshold is None:
-        quantile = min(max(args.quantile, 0.0), 0.99)
-        threshold = float(np.quantile(scores, quantile))
-
-    return max(float(args.min_score), threshold)
-
-
-def estimate_nearest_neighbor(coords: np.ndarray) -> float | None:
-    n = coords.shape[0]
-    if n < 2:
-        return None
-    diff = coords[:, None, :] - coords[None, :, :]
-    dist = np.hypot(diff[..., 0], diff[..., 1])
-    np.fill_diagonal(dist, np.inf)
-    nearest = dist.min(axis=1)
-    finite = nearest[np.isfinite(nearest)]
-    if finite.size == 0:
-        return None
-    return float(np.median(finite))
-
-
-def deduplicate(data: np.ndarray, min_dist: float) -> np.ndarray:
-    if data.size <= 1 or min_dist <= 0:
-        return data.copy()
-    order = np.argsort(data["score"])[::-1]
-    keep_flags = np.zeros(data.size, dtype=bool)
-    accepted = []
-    for idx in order:
-        cy = data["cy"][idx]
-        cx = data["cx"][idx]
-        if accepted:
-            accepted_arr = np.asarray(accepted)
-            dist = np.hypot(accepted_arr[:, 0] - cy, accepted_arr[:, 1] - cx)
-            if np.any(dist < min_dist):
-                continue
-        keep_flags[idx] = True
-        accepted.append((cy, cx))
-    return data[keep_flags]
-
-
 def process_file(path: Path, args: argparse.Namespace) -> tuple[int, int, int, float, float]:
     data = load_positions(path)
-    scores = data["score"]
-    threshold = choose_threshold(scores, args)
-    keep_mask = scores >= threshold
-    filtered = data[keep_mask]
-
-    nn_estimate = None
-    min_dist = float(args.min_dist)
-    if filtered.size >= 2:
-        coords = np.column_stack([filtered["cy"], filtered["cx"]])
-        nn_estimate = estimate_nearest_neighbor(coords)
-        if nn_estimate is not None and nn_estimate > 0:
-            min_dist = max(min_dist, float(args.nn_factor) * nn_estimate)
-
-    deduped = deduplicate(filtered, min_dist)
+    deduped, threshold, min_dist, removed_score, removed_dist = clean_positions(
+        data,
+        score_threshold=args.score_threshold,
+        adaptive_method=args.adaptive_method,
+        quantile=args.quantile,
+        min_score=args.min_score,
+        nn_factor=args.nn_factor,
+        min_dist=args.min_dist,
+    )
     if args.output_suffix:
         out_path = path.with_name(f"{path.stem}_{args.output_suffix}{path.suffix}")
     else:
@@ -151,8 +88,6 @@ def process_file(path: Path, args: argparse.Namespace) -> tuple[int, int, int, f
     if not args.dry_run:
         save_positions(out_path, deduped)
 
-    removed_score = data.size - filtered.size
-    removed_dist = filtered.size - deduped.size
     return data.size, removed_score, removed_dist, threshold, min_dist
 
 
