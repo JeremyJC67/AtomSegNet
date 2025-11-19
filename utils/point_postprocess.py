@@ -61,6 +61,28 @@ def estimate_nearest_neighbor(coords: np.ndarray) -> float | None:
     return float(np.median(finite))
 
 
+def deduplicate_by_pixel(data: np.ndarray, cell: float = 1.0) -> np.ndarray:
+    """Collapse points that fall in the same grid cell; keep highest score."""
+    if data.size <= 1:
+        return data.copy()
+    if cell <= 0:
+        return data.copy()
+    cell = float(cell)
+    cy = data["cy"] / cell
+    cx = data["cx"] / cell
+    keys = np.floor(cy).astype(np.int64) << 32 | np.floor(cx).astype(np.int64)
+    order = np.argsort(data["score"])[::-1]
+    seen = set()
+    keep_flags = np.zeros(data.size, dtype=bool)
+    for idx in order:
+        key = keys[idx]
+        if key in seen:
+            continue
+        seen.add(key)
+        keep_flags[idx] = True
+    return data[keep_flags]
+
+
 def deduplicate(data: np.ndarray, min_dist: float) -> np.ndarray:
     """Greedy keep-highest-score while enforcing `min_dist` separation."""
     if data.size <= 1 or min_dist <= 0:
@@ -90,6 +112,7 @@ def clean_positions(
     min_score: float = 0.4,
     nn_factor: float = 0.5,
     min_dist: float = 0.0,
+    cell: float = 0.0,
 ) -> Tuple[np.ndarray, float, float, int, int]:
     """Apply score filtering then NN dedup; return cleaned data & diagnostics.
 
@@ -100,7 +123,11 @@ def clean_positions(
         number removed by score,
         number removed by distance.
     """
-    scores = data["score"]
+    points = data
+    if cell and cell > 0:
+        points = deduplicate_by_pixel(points, cell=cell)
+
+    scores = points["score"]
     threshold = choose_threshold(
         scores,
         score_threshold=score_threshold,
@@ -109,8 +136,8 @@ def clean_positions(
         min_score=min_score,
     )
     keep_mask = scores >= threshold
-    filtered = data[keep_mask]
-    removed_score = data.size - filtered.size
+    filtered = points[keep_mask]
+    removed_score = points.size - filtered.size
 
     effective_dist = float(min_dist)
     if filtered.size >= 2:

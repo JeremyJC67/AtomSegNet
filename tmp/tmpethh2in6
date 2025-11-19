@@ -1,0 +1,3 @@
+eval "$(/home/jicwang/miniconda3/bin/conda shell.posix hook)"
+conda activate  /home/jicwang/miniconda3/envs/atomsegnet
+python apply_mask_to_points.py --mask-root atom_cluster_out --detection-root atomsegnet1742_results --dataset-root /home/jicwang/atom-research/dataset/1742 --dilate 15 --head 50 --tail 0

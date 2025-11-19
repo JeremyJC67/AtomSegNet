@@ -80,6 +80,7 @@ def process_file(path: Path, args: argparse.Namespace) -> tuple[int, int, int, f
         min_score=args.min_score,
         nn_factor=args.nn_factor,
         min_dist=args.min_dist,
+        cell=args.pixel_cell,
     )
     if args.output_suffix:
         out_path = path.with_name(f"{path.stem}_{args.output_suffix}{path.suffix}")
@@ -108,6 +109,8 @@ def parse_args() -> argparse.Namespace:
                         help="Factor applied to the median nearest-neighbor distance.")
     parser.add_argument("--min-dist", type=float, default=0.0,
                         help="Absolute minimum distance used for deduplication (pixels).")
+    parser.add_argument("--pixel-cell", type=float, default=0.0,
+                        help="Optional grid cell size (pixels) to merge duplicate centers before NN dedup.")
     parser.add_argument("--dry-run", action="store_true", help="Compute statistics without writing output files.")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N files.")
     parser.add_argument("--verbose", action="store_true", help="Print per-file details.")
