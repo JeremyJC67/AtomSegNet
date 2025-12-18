@@ -1,0 +1,20 @@
+@startuml
+title Pipeline A: Raw 1742 → AtomSegNet-denoise → mask → lattice
+
+participant "dataset/1742/*.jpg" as Raw
+participant "denoised_1742/*.png\n(0000_denoise.png)" as DenA
+participant "atomsegnet1742_results/*_denoise" as ResA
+participant "blured_1742_sigma14\n+ atom_cluster_out_sigma14" as MaskA
+participant "atomsegnet1742_results/*_denoise\n(lattice_filled3)" as GeoA
+
+Raw -> DenA: batch_run_denoise.py\n(model=denoise)
+DenA -> ResA: batch_run_atomsegnet.py\n(model=Gen1-gaussianMask)
+
+Raw -> MaskA: blur_dataset.py (σ=14, normalize)
+MaskA <- Raw: atom_cluster_segment.py\n(--sigma-fg 2.0,\n --use-local, block-size 151,\n offset 0.01, min-area 3000,\n close 10, open 2, keep-k 2,\n smooth-k 7, simplify-eps 3.0,\n --save-crops)
+
+ResA -> ResA: apply_mask_to_points.py\n*_denoise_pos_Gen1-gaussianMask.txt\n→ *_denoise_pos_gaussian_blur_*.txt\n+ *_denoise_origin_gaussian_blur_*.png
+
+ResA -> GeoA: lattice_postprocess.py\npattern='*_denoise_pos_gaussian_blur_*.txt'\noutput-suffix=lattice_filled3\n→ *_lattice_filled3.txt + PNG
+@enduml
+

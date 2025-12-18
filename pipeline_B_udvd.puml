@@ -1,0 +1,20 @@
+@startuml
+title Pipeline B: UDVD → AtomSegNet → mask → lattice
+
+participant "1742_udvd_incnb_jpg/*.jpg" as UDVD
+participant "atomsegnet_udvd_results_full" as ResB
+participant "blured_udvd_sigma14\n+ atom_cluster_out_udvd_sigma14_full" as MaskB
+participant "atomsegnet_udvd_results_full\n(lattice_filled2/3/dense)" as GeoB
+
+' UDVD denoise is produced externally → 1742_udvd_incnb_jpg
+
+UDVD -> ResB: batch_run_atomsegnet.py\n(model=Gen1-gaussianMask)
+
+UDVD -> MaskB: blur_dataset.py (sigma=14, normalize)
+MaskB <- UDVD: atom_cluster_segment.py\n(same parameters as Pipeline A)\n→ 1742_udvd_incnb_XXXX_heavyblur_mask.png
+
+ResB -> ResB: apply_cluster_filter.py\nmask_root=atom_cluster_out_udvd_sigma14_full,\npoints_template='{}_pos_Gen1-gaussianMask.txt',\n--dilate 15\n→ *_pos_gaussian_blur_*.txt\n+ *_origin_gaussian_blur_*.png
+
+ResB -> GeoB: lattice_postprocess.py\nsuffix=lattice_filled2 / lattice_filled3\n(moderate lattice completion)
+ResB -> GeoB: lattice_postprocess_dense.py\nsuffix=lattice_dense\n(very dense completion, for experiments)
+@enduml

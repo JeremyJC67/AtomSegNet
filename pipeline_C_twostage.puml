@@ -1,0 +1,19 @@
+@startuml
+title Pipeline C: UDVD → AtomSegNet denoise (second stage) → AtomSegNet → mask → lattice
+
+participant "1742_udvd_incnb_jpg/*.jpg" as UDVD
+participant "denoised_udvd_twostage/*.png" as Den2
+participant "atomsegnet_udvd_twostage_results/*_denoise" as ResC
+participant "atom_cluster_out_udvd_sigma14_full" as MaskB
+participant "atomsegnet_udvd_twostage_results\n(lattice_filled3)" as GeoC
+
+UDVD -> Den2: batch_run_denoise.py\ninput=1742_udvd_incnb_jpg,\noutput=denoised_udvd_twostage,\nmodel=denoise
+
+Den2 -> ResC: batch_run_atomsegnet.py\ninput=denoised_udvd_twostage,\noutput=atomsegnet_udvd_twostage_results,\nmodel=Gen1-gaussianMask
+
+UDVD -> MaskB: reuse Pipeline B sigma14 masks
+
+ResC -> ResC: apply_cluster_filter.py\nmask_root=atom_cluster_out_udvd_sigma14_full,\ndir_template='{}_denoise',\npoints_template='{}_denoise_pos_Gen1-gaussianMask.txt',\n--dilate 15\n→ *_denoise_pos_gaussian_blur_*.txt\n+ *_denoise_origin_gaussian_blur_*.png
+
+ResC -> GeoC: lattice_postprocess.py\npattern='*_denoise_pos_gaussian_blur_*.txt',\noutput-suffix=lattice_filled3\n→ *_lattice_filled3.txt + PNG
+@enduml
